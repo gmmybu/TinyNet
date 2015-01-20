@@ -1,25 +1,25 @@
 #pragma once
 #include "Common.h"
 
-//参考STL智能指针实现，暴露引用计数接口，用来在某些情况延长对象生命周期
-
 NAMESPACE_START(TinyNet)
+
+//未优化
 
 template<class T>
 class RefCount
 {
-public:
-    RefCount(T* ptr) : __ref(1), __ptr(ptr)
+protected:
+    RefCount(T* ptr) : _ref(1), _ptr(ptr)
     {
     }
 
     virtual ~RefCount()
     {
     }
-
+public:
     T* Get()
     {
-        return __ptr;
+        return _ptr;
     }
 
     void ForceDelete()
@@ -29,23 +29,21 @@ public:
 
     uint32_t IncRef()
     {
-        return ::InterlockedIncrement(&__ref);
+        return InterlockedIncrement(&_ref);
     }
 
     uint32_t DecRef()
     {
-        uint32_t refer = ::InterlockedDecrement(&__ref);
-        if (refer == 0) {
-            Destroy();
-        }
-        return refer;
+        uint32_t ref = InterlockedDecrement(&_ref);
+        if (ref == 0) { Destroy(); }
+        return ref;
     }
 protected:
-    T*   __ptr;
-private:
     virtual void Destroy() = 0;
-    
-    volatile uint32_t    __ref;
+
+    T*          _ptr;
+private:
+    uint32_t    _ref;
 
     NOCOPYASSIGN(RefCount);
 };
@@ -53,15 +51,16 @@ private:
 template<class T>
 class RefCount_Default : public RefCount<T>
 {
-public:
+    template<class T>
+    friend RefCount<T>* MakeShared(T*);
+protected:
     RefCount_Default(T* ptr) : RefCount(ptr)
     {
     }
-private:
+protected:
     void Destroy()
     {
-        delete __ptr;
-
+        delete _ptr;
         delete this;
     }
 };
@@ -69,33 +68,46 @@ private:
 template<class T, class D>
 class RefCount_Deleter : public RefCount<T>
 {
-public:
-    RefCount_Deleter(T* ptr, const D& del) : RefCount(ptr), __del(del)
+    template<class T, class D>
+    friend RefCount<T>* MakeShared(T*, const D&);
+protected:
+    RefCount_Deleter(T* ptr, const D& del) : RefCount(ptr), _del(del)
     {
     }
-private:
+protected:
     void Destroy()
     {
-        __del(__ptr);
-
+        _del(_ptr);
         delete this;
     }
 
-    D    __del;
+    D    _del;
 };
+
+template<class T>
+RefCount<T>* MakeShared(T* ptr)
+{
+    return new RefCount_Default<T>(ptr);
+}
+
+template<class T, class D>
+RefCount<T>* MakeShared(T* ptr, const D& d)
+{
+    return new RefCount_Deleter<T, decltype(d)>(ptr, d);
+}
 
 template<class T>
 class SharedPtr
 {
 public:
     SharedPtr(T* ptr = nullptr) : _ptr(ptr),
-        _ref(ptr == nullptr ? nullptr : new RefCount_Default<T>(ptr))
+        _ref(ptr == nullptr ? nullptr : MakeShared(ptr))
     {
     }
 
     template<class D>
     SharedPtr(T* ptr, const D& del) : _ptr(ptr),
-        _ref(ptr == nullptr ? nullptr : new RefCount_Deleter<T, decltype(del)>(ptr, del))
+        _ref(ptr == nullptr ? nullptr : MakeShared(ptr, del))
     {
     }
 
@@ -199,17 +211,5 @@ private:
     T*             _ptr;
     RefCount<T>*   _ref;
 };
-
-template<class T>
-RefCount<T>* MakeShared(T* ptr)
-{
-    return new RefCount_Default<T>(ptr);
-}
-
-template<class T, class D>
-RefCount<T>* MakeShared(T* ptr, const D& d)
-{
-    return new RefCount_Deleter(ptr, d);
-}
 
 }

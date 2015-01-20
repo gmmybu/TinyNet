@@ -3,22 +3,15 @@
 
 NAMESPACE_START(TinyNet)
 
-class Packet
-{
-public:
-    size_t     _size;   //读数据时不要使用该字段
-    size_t     _used;
-
-    int32_t    _type;
-    int32_t    _guid;
-private:
-    NOCOPYASSIGN(Packet);
-};
-
+class Buffer;
+class Packet;
 typedef SharedPtr<Packet> PacketPtr;
 
-class PacketAllocator
+class Packet
 {
+    friend class Socket;
+    friend class PacketWriter;
+    friend class PacketReader;
 public:
     static const size_t MaxCapacity = INT16_MAX;
     static const size_t MinCapacity = 16;
@@ -26,6 +19,15 @@ public:
     static const size_t IncCapacity = 128;
 
     static PacketPtr Alloc(size_t capacity = DefCapacity);
+    static PacketPtr Alloc(RefCount<Buffer>* buffer, uint8_t* from);
+private:
+    size_t     _size;
+    size_t     _used;
+
+    int32_t    _type;
+    int32_t    _guid;
+
+    NOCOPYASSIGN(Packet);
 };
 
 enum SeekMode
@@ -154,14 +156,16 @@ private:
     uint8_t*     _base;
     uint8_t*     _last;
     PacketPtr    _packet;
+
+    NOCOPYASSIGN(PacketReader);
 };
 
 class PacketWriter
 {
 public:
-    PacketWriter(int32_t type, int32_t guid, size_t capacity = PacketAllocator::DefCapacity)
+    PacketWriter(int32_t type, int32_t guid, size_t capacity = Packet::DefCapacity)
     {
-        _packet = PacketAllocator::Alloc(capacity);
+        _packet = Packet::Alloc(capacity);
         _packet->_type = type;
         _packet->_guid = guid;
 
@@ -179,10 +183,10 @@ public:
 
         //扩充容量
         if (_packet->_size < used) {
-            if (used > PacketAllocator::MaxCapacity)
+            if (used > Packet::MaxCapacity)
                 throw std::exception("MessageWriter::Write, Exceed MaxSize");    
 
-            PacketPtr packet = PacketAllocator::Alloc(used + PacketAllocator::IncCapacity);
+            PacketPtr packet = Packet::Alloc(used + Packet::IncCapacity);
             memcpy(&packet->_used, &_packet->_used, _packet->_used + 12);
 
             _base = (uint8_t*)(packet.Get() + 1) + packet->_used;
@@ -222,7 +226,7 @@ public:
 private:
     uint8_t*     _base;
     PacketPtr    _packet;
-private:
+
     NOCOPYASSIGN(PacketWriter);
 };
 

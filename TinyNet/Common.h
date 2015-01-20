@@ -2,12 +2,12 @@
 #include <set>
 #include <map>
 #include <list>
+#include <vector>
 #include <memory>
 #include <string>
-#include <vector>
 #include <stdint.h>
-#include <WinSock2.h>
-#include <Mswsock.h>
+#include <winsock2.h>
+#include <mswsock.h>
 #include <windows.h>
 #include <type_traits>
 #pragma comment(lib, "ws2_32.lib")
@@ -26,7 +26,6 @@ NAMESPACE_START(TinyNet)
 
 class Mutex
 {
-    NOCOPYASSIGN(Mutex);
 public:
     Mutex()
     {
@@ -49,11 +48,12 @@ public:
     }
 private:
     CRITICAL_SECTION _mutex;
+
+    NOCOPYASSIGN(Mutex);
 };
 
 class MutexGuard
 {
-    NOCOPYASSIGN(MutexGuard);
 public:
     MutexGuard(Mutex& mutex) : _mutex(mutex)
     {
@@ -66,6 +66,8 @@ public:
     }
 private:
     Mutex& _mutex;
+
+    NOCOPYASSIGN(MutexGuard);
 };
 
 NAMESPACE_CLOSE(TinyNet)
