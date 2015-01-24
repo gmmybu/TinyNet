@@ -87,7 +87,6 @@
     <ClInclude Include="Buffer.h" />
     <ClInclude Include="Common.h" />
     <ClInclude Include="Dispatcher.h" />
-    <ClInclude Include="EventQueue.h" />
     <ClInclude Include="Packet.h" />
     <ClInclude Include="RefCount.h" />
     <ClInclude Include="Socket.h" />

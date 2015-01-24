@@ -3,7 +3,7 @@
 
 NAMESPACE_START(TinyNet)
 
-PacketPtr Packet::Alloc(size_t capacity)
+PacketPtr Packet::Create(size_t capacity)
 {
     if (capacity < MinCapacity) {
         capacity = MinCapacity;
@@ -17,28 +17,28 @@ PacketPtr Packet::Alloc(size_t capacity)
     return PacketPtr(message, free);
 }
 
-static Mutex __ownersLock;
-static std::map<Packet*, RefCount<Buffer>*> __owners;
+static Mutex g_bufferContainersLock;
+static std::map<Packet*, RefCount<Buffer>*> g_bufferContainers;
 
 static void Register(Packet* message, RefCount<Buffer>* buffer)
 {
     buffer->IncRef();
 
-    MutexGuard guard(__ownersLock);
-    __owners.insert(std::make_pair(message, buffer));
+    MutexGuard guard(g_bufferContainersLock);
+    g_bufferContainers.insert(std::make_pair(message, buffer));
 }
 
 static void UnRegister(Packet* message)
 {
-    MutexGuard guard(__ownersLock);
-    auto iter = __owners.find(message);
-    if (iter != __owners.end()) {
+    MutexGuard guard(g_bufferContainersLock);
+    auto iter = g_bufferContainers.find(message);
+    if (iter != g_bufferContainers.end()) {
         iter->second->DecRef();
-        __owners.erase(iter);
+        g_bufferContainers.erase(iter);
     }
 }
 
-PacketPtr Packet::Alloc(RefCount<Buffer>* buffer, uint8_t* from)
+PacketPtr Packet::Create(RefCount<Buffer>* buffer, uint8_t* from)
 {
     Packet* message = (Packet*)(from - 4);
     Register(message, buffer);

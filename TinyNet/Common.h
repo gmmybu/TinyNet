@@ -26,6 +26,7 @@ NAMESPACE_START(TinyNet)
 
 class Mutex
 {
+    NOCOPYASSIGN(Mutex);
 public:
     Mutex()
     {
@@ -48,12 +49,11 @@ public:
     }
 private:
     CRITICAL_SECTION _mutex;
-
-    NOCOPYASSIGN(Mutex);
 };
 
 class MutexGuard
 {
+    NOCOPYASSIGN(MutexGuard);
 public:
     MutexGuard(Mutex& mutex) : _mutex(mutex)
     {
@@ -66,8 +66,6 @@ public:
     }
 private:
     Mutex& _mutex;
-
-    NOCOPYASSIGN(MutexGuard);
 };
 
 NAMESPACE_CLOSE(TinyNet)

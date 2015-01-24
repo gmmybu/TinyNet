@@ -29,9 +29,6 @@
     <ClInclude Include="Dispatcher.h">
       <Filter>Source</Filter>
     </ClInclude>
-    <ClInclude Include="EventQueue.h">
-      <Filter>Source</Filter>
-    </ClInclude>
     <ClInclude Include="Packet.h">
       <Filter>Source</Filter>
     </ClInclude>

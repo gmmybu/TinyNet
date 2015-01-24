@@ -8,7 +8,8 @@ NAMESPACE_START(TinyNet)
 template<class T>
 class RefCount
 {
-protected:
+    NOCOPYASSIGN(RefCount);
+public:
     RefCount(T* ptr) : _ref(1), _ptr(ptr)
     {
     }
@@ -16,7 +17,7 @@ protected:
     virtual ~RefCount()
     {
     }
-public:
+
     T* Get()
     {
         return _ptr;
@@ -42,18 +43,13 @@ protected:
     virtual void Destroy() = 0;
 
     T*          _ptr;
-private:
     uint32_t    _ref;
-
-    NOCOPYASSIGN(RefCount);
 };
 
 template<class T>
 class RefCount_Default : public RefCount<T>
 {
-    template<class T>
-    friend RefCount<T>* MakeShared(T*);
-protected:
+public:
     RefCount_Default(T* ptr) : RefCount(ptr)
     {
     }
@@ -68,9 +64,7 @@ protected:
 template<class T, class D>
 class RefCount_Deleter : public RefCount<T>
 {
-    template<class T, class D>
-    friend RefCount<T>* MakeShared(T*, const D&);
-protected:
+public:
     RefCount_Deleter(T* ptr, const D& del) : RefCount(ptr), _del(del)
     {
     }

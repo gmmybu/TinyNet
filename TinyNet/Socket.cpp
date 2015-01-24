@@ -251,7 +251,7 @@ private:
         while (_recvBuffer->_base - _recvFrom >= 12) {
             size_t* used = (size_t*)_recvFrom;
             if (_recvBuffer->_base - _recvFrom >= *used + 12) {
-                PacketPtr packet = Packet::Alloc(_recvBuffer.GetRef(), _recvFrom);
+                PacketPtr packet = Packet::Create(_recvBuffer.GetRef(), _recvFrom);
                 Schedule(SocketEvent::MakeReceive(_handler, _name, packet));
                 _recvFrom += *used + 12;
             } else {
@@ -271,7 +271,7 @@ private:
         }
 
         if (newBufferSize != 0) {
-            BufferPtr newBuffer = Buffer::Alloc(newBufferSize);
+            BufferPtr newBuffer = Buffer::Create(newBufferSize);
             uint8_t* newStart = newBuffer->_base;
 
             newBuffer->Write(_recvFrom, _recvBuffer->_base - _recvFrom);
@@ -285,7 +285,7 @@ private:
     void BeginReceive()
     {
         if (_recvBuffer.Get() == NULL) {
-            _recvBuffer = Buffer::Alloc(2048);
+            _recvBuffer = Buffer::Create(2048);
             _recvFrom = _recvBuffer->_base;
         }
 

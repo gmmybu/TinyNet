@@ -9,25 +9,21 @@ typedef SharedPtr<Packet> PacketPtr;
 
 class Packet
 {
-    friend class Socket;
-    friend class PacketWriter;
-    friend class PacketReader;
+    NOCOPYASSIGN(Packet);
 public:
     static const size_t MaxCapacity = INT16_MAX;
     static const size_t MinCapacity = 16;
     static const size_t DefCapacity = 128;
     static const size_t IncCapacity = 128;
 
-    static PacketPtr Alloc(size_t capacity = DefCapacity);
-    static PacketPtr Alloc(RefCount<Buffer>* buffer, uint8_t* from);
-private:
+    static PacketPtr Create(size_t capacity = DefCapacity);
+    static PacketPtr Create(RefCount<Buffer>* buffer, uint8_t* from);
+
     size_t     _size;
     size_t     _used;
 
     int32_t    _type;
     int32_t    _guid;
-
-    NOCOPYASSIGN(Packet);
 };
 
 enum SeekMode
@@ -39,6 +35,7 @@ enum SeekMode
 
 class PacketReader
 {
+    NOCOPYASSIGN(PacketReader);
 public:
     PacketReader(PacketPtr packet) : _packet(packet)
     {
@@ -97,7 +94,6 @@ public:
         return *this;
     }
 
-    //假定Vector内存连续
     template<class T>
     PacketReader& operator>>(std::vector<T>& arr)
     {
@@ -156,16 +152,15 @@ private:
     uint8_t*     _base;
     uint8_t*     _last;
     PacketPtr    _packet;
-
-    NOCOPYASSIGN(PacketReader);
 };
 
 class PacketWriter
 {
+    NOCOPYASSIGN(PacketWriter);
 public:
     PacketWriter(int32_t type, int32_t guid, size_t capacity = Packet::DefCapacity)
     {
-        _packet = Packet::Alloc(capacity);
+        _packet = Packet::Create(capacity);
         _packet->_type = type;
         _packet->_guid = guid;
 
@@ -181,12 +176,11 @@ public:
     {
         size_t used = _packet->_used + size;
 
-        //扩充容量
         if (_packet->_size < used) {
             if (used > Packet::MaxCapacity)
                 throw std::exception("MessageWriter::Write, Exceed MaxSize");    
 
-            PacketPtr packet = Packet::Alloc(used + Packet::IncCapacity);
+            PacketPtr packet = Packet::Create(used + Packet::IncCapacity);
             memcpy(&packet->_used, &_packet->_used, _packet->_used + 12);
 
             _base = (uint8_t*)(packet.Get() + 1) + packet->_used;
@@ -226,8 +220,6 @@ public:
 private:
     uint8_t*     _base;
     PacketPtr    _packet;
-
-    NOCOPYASSIGN(PacketWriter);
 };
 
 NAMESPACE_CLOSE(TinyNet)

@@ -2,7 +2,7 @@
 
 NAMESPACE_START(TinyNet)
 
-BufferPtr Buffer::Alloc(size_t size)
+BufferPtr Buffer::Create(size_t size)
 {
     if (size < 64) {
         size = 64;

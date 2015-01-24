@@ -8,9 +8,9 @@ typedef SharedPtr<Buffer> BufferPtr;
 
 class Buffer
 {
-    friend class Socket;
+    NOCOPYASSIGN(Buffer);
 public:
-    static BufferPtr Alloc(size_t size);
+    static BufferPtr Create(size_t size);
 
     void Write(const void* data, size_t size)
     {
@@ -20,11 +20,9 @@ public:
         memcpy(_base, data, size);
         _base += size;
     }
-private:
+
     uint8_t*   _base;
     uint8_t*   _last;
-private:
-    NOCOPYASSIGN(Buffer);
 };
 
 NAMESPACE_CLOSE(TinyNet)
