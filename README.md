@@ -12,10 +12,8 @@
 ==========================================================================================================================
 
 
-dispatcher修改了1，如果某sockethandler没有在使用，立即删除。同时把serverhandler单独处理，不再和sockethandler放在一起了。
+dispatcher修改了1，如果sockethandler没有使用，立即删除。serverhandler改为单独处理，不再和sockethandler混在一起
 
-socketmanager修改了2，线程退出前关闭所有套接字，同时等待所有异步操作返回，可能依然有问题。
+socketmanager修改了2，线程退出前关闭所有套接字，同时等待所有异步操作返回，可能依然有问题
 
-添加了scheduler，增加了定时器功能
-
-以及修改了其他bug。
+添加了scheduler，增加了定时器功能，以及修改了其他bug
