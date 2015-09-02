@@ -1,18 +1,18 @@
 #include "Socket.h"
 #include "Buffer.h"
 #include "Dispatcher.h"
+#include <mswsock.h>
 
-NAMESPACE_START(TinyNet)
+TINYNET_START()
 
-LPFN_ACCEPTEX AcceptEx;
+LPFN_ACCEPTEX  AcceptEx;
 LPFN_CONNECTEX ConnectEx;
 
-HANDLE g_Completion;
-SocketManager& g_Manager = SocketManager::Instance();
+HANDLE __ioport;
 
-inline void Schedule(const SocketEvent& ev)
+inline void Schedule(SocketEvent&& ev)
 {
-    Dispatcher::Instance().Enqueue(ev);
+    theDispatcher.Enqueue(std::move(ev));
 }
 
 inline void ClearOverlapped(OVERLAPPED& overlapped)
@@ -38,9 +38,14 @@ inline sockaddr_in GetSockAddr(const std::string& host, uint16_t port)
 
 //////////////////////////////////////////////////////////////////////
 
+class Socket;
+
+typedef RefCount<Socket> SocketRef;
+
+/// internal class
+
 class Socket
 {
-    friend class SocketManager;
 public:
     Socket(SOCKET socket) :
         _socket(socket), _connected(false), _closed(false),
@@ -54,23 +59,23 @@ public:
     {
     }
 
-    Socket(SOCKET socket, SocketAcceptHandlerPtr& acceptHandler) :
+    Socket(SOCKET socket, ServerHandlerPtr& acceptHandler) :
         _socket(socket), _acceptHandler(acceptHandler), _closed(false),
         _sendOffset(0), _listen(true), _connected(false), _name(0)
     {
     }
-public:
+
     static bool Initialize()
     {
         SOCKET socket = Create();
         if (socket == INVALID_SOCKET)
             return false;
         
-        GUID acceptEx = WSAID_ACCEPTEX;
+        GUID acceptEx  = WSAID_ACCEPTEX;
         GUID connectEx = WSAID_CONNECTEX;
         DWORD byteRead = 0;
         DWORD ctrlCode = SIO_GET_EXTENSION_FUNCTION_POINTER; 
-        WSAIoctl(socket, ctrlCode, &acceptEx, sizeof(GUID), &AcceptEx, sizeof(AcceptEx), &byteRead, 0, 0);
+        WSAIoctl(socket, ctrlCode, &acceptEx,  sizeof(GUID), &AcceptEx,  sizeof(AcceptEx),  &byteRead, 0, 0);
         WSAIoctl(socket, ctrlCode, &connectEx, sizeof(GUID), &ConnectEx, sizeof(ConnectEx), &byteRead, 0, 0);
         closesocket(socket);
 
@@ -81,7 +86,6 @@ public:
     {
         return WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
     }
-private:
 
     #pragma region Operations
     
@@ -128,7 +132,6 @@ private:
 
         ClearOverlapped(_sendOverlapped);
 
-        printf("Socket::Send, %x:%d\n", data, size);
         return Check(WSASend(_socket, &_sendBuff, 1, NULL, 0, &_sendOverlapped, NULL) != SOCKET_ERROR);
     }
 
@@ -138,8 +141,6 @@ private:
         _recvBuff.len = size;
 
         ClearOverlapped(_recvOverlapped);
-        
-        printf("Socket::Receive, %x:%d\n", data, size);
 
         DWORD RecvBytes, Flags = 0;
         return Check(WSARecv(_socket, &_recvBuff, 1, &RecvBytes, &Flags, &_recvOverlapped, NULL) != SOCKET_ERROR);
@@ -152,16 +153,13 @@ private:
 
     #pragma endregion
 
-private:
-
     #pragma region Accept
 
     void DoAccept(const std::string& host, uint16_t port)
     {
         sockaddr_in addr = GetSockAddr(host, port);
-        if (!Bind(addr) || !Bind(g_Completion) || !Listen()) {
-            printf("Socket::DoAccept, %d\n", GetLastError());
-            g_Manager.CloseSocket(_name);
+        if (!Bind(addr) || !Bind(__ioport) || !Listen()) {
+            theManager.ShutDown(_name);
         } else {
             BeginAccept();
         }
@@ -169,23 +167,21 @@ private:
 
     void OnAccept(BOOL status)
     {
-        printf("Socket::OnAccpet, %d\n", _accept);
-
         if (status) {
-            auto refer = g_Manager.GetSocket(_accept);
+            auto refer = theManager.GetSocket(_accept);
             if (refer != nullptr) {
                 Socket* socket = refer->Get();
-                socket->_handler = _acceptHandler->GetHandler(_accept);
-                socket->_connected = true;
-                if (socket->Bind(g_Completion)) {
+                socket->_handler = _acceptHandler->OnAccept(_accept);
+                if (socket->Bind(__ioport)) {
+                    socket->_connected = true;
                     Schedule(SocketEvent::MakeConnect(socket->_handler, _accept, true));
                     socket->BeginReceive();
                 } else {
-                    g_Manager.CloseSocket(_accept);
+                    theManager.ShutDown(_accept);
                 }
             }
         } else {
-            g_Manager.CloseSocket(_accept);
+            theManager.ShutDown(_accept);
         }
 
         BeginAccept();
@@ -195,15 +191,14 @@ private:
     {
         SOCKET accept = Socket::Create();
         if (accept == INVALID_SOCKET) {
-            g_Manager.CloseSocket(_name);
+            theManager.ShutDown(_name);
             return;
         }
 
-        _accept = g_Manager.AddSocket(MakeShared(new Socket(accept)));
+        _accept = theManager.AddSocket(MakeShared(new Socket(accept)));
         if (!Accept(accept)) {
-            printf("Socket::BeginAccept, %d\n", GetLastError());
-            g_Manager.CloseSocket(_accept);
-            g_Manager.CloseSocket(_name);
+            theManager.ShutDown(_accept);
+            theManager.ShutDown(_name);
         }
     }
 
@@ -214,23 +209,24 @@ private:
     void DoConnect(const std::string& host, uint16_t port)
     {
         sockaddr_in addr = GetSockAddr();
-        if (!Bind(addr) || !Bind(g_Completion) || !Connect(host, port)) {
-            g_Manager.CloseSocket(_name);
+        if (!Bind(addr) || !Bind(__ioport) || !Connect(host, port)) {
+            Schedule(SocketEvent::MakeConnect(_handler, _name, false));
+            theManager.ShutDown(_name);
         }
     }
 
     void OnConnect(BOOL status)
     {
-        printf("Socket::OnConnect, %d, %d\n", _name, status);
+        if (status) {
+            _connected = true;
+            Schedule(SocketEvent::MakeConnect(_handler, _name, true));
 
-        Schedule(SocketEvent::MakeConnect(_handler, _name, status));
-
-        _connected = status;
-        if (_connected) {
             BeginSend();
             BeginReceive();
         } else {
-            g_Manager.CloseSocket(_name);
+            Schedule(SocketEvent::MakeConnect(_handler, _name, false));
+
+            theManager.ShutDown(_name);
         }
     }
 
@@ -240,10 +236,8 @@ private:
     
     void OnReceive(uint32_t transfered)
     {
-        printf("Socket::OnReceive, %d\n", transfered);
-
         if (transfered == 0) {
-            g_Manager.CloseSocket(_name);
+            theManager.ShutDown(_name);
             return;
         }
 
@@ -262,7 +256,12 @@ private:
         size_t newBufferSize = 0;
         if (_recvBuffer->_base - _recvFrom >= 4) {
             size_t* used = (size_t*)_recvFrom;
-            //应该防止包头攻击
+            //遇到大包直接断开
+            if (*used >= 65500) {
+                theManager.ShutDown(_name);
+                return;
+            }
+
             if (_recvBuffer->_last - _recvFrom < *used + 12) {
                 newBufferSize = *used + 12 + 1024;
             }
@@ -290,10 +289,7 @@ private:
         }
 
         if (!Receive(_recvBuffer->_base, _recvBuffer->_last - _recvBuffer->_base)) {
-            printf("Socket::BeginReceive, %d\n", GetLastError());
-            g_Manager.CloseSocket(_name);
-        } else {
-            printf("Socket::BeginReceive, success\n");
+            theManager.ShutDown(_name);
         }
     }
     
@@ -303,8 +299,6 @@ private:
 
     void DoSend(PacketPtr& packet, bool closing)
     {
-        printf("Socket::DoSend\n");
-
         _closing = _closing || closing;
 
         _sendQueue.push_back(packet);
@@ -315,10 +309,8 @@ private:
 
     void OnSend(uint32_t transfered)
     {
-        printf("Socket::OnSend, %d\n", transfered);
-
         if (transfered == 0) {
-            g_Manager.CloseSocket(_name);
+            theManager.ShutDown(_name);
             return;
         }
 
@@ -343,10 +335,7 @@ private:
         if (_sendPacket.Get() != nullptr) {
             _sending = true;
             if (!Send((uint8_t*)&_sendPacket->_used + _sendOffset, _sendPacket->_used + 12 - _sendOffset)) {
-                printf("Socket::BeginSend, %d\n", GetLastError());
-                g_Manager.CloseSocket(_name);
-            } else {
-                printf("Socket::BeginSend, success\n");
+                theManager.ShutDown(_name);
             }
         } else {
             _sending = false;
@@ -357,28 +346,28 @@ private:
 
     void DoClose()
     {
-        printf("Socket::DoClose, %d\n", _name);
+        if (!_closed) {
+            if (_listen) {
+                Schedule(SocketEvent::MakeClose(_acceptHandler, _name));
+            } else if (_connected) {
+                Schedule(SocketEvent::MakeClose(_handler, _name));
+            }
 
-        if (_listen) {
-            auto closeEvent = SocketEvent::MakeClose(_acceptHandler, _name);
-            Schedule(closeEvent);
-        } else if (_connected) {
-            Schedule(SocketEvent::MakeClose(_handler, _name));
+            closesocket(_socket);
+            _closed = true;
         }
-
-        closesocket(_socket);
     }
-private:
+
     //General
-    SOCKET              _socket;
-    uint32_t            _name;
-    bool                _closed;
-    bool                _listen;
-    RefCount<Socket>*   _self;
+    SOCKET       _socket;
+    uint32_t     _name;
+    bool         _closed;
+    bool         _listen;
+    SocketRef*   _self;
 
     //Accept
-    uint32_t                  _accept;
-    SocketAcceptHandlerPtr    _acceptHandler;
+    uint32_t            _accept;
+    ServerHandlerPtr    _acceptHandler;
 
     //Connect
     bool                _connected;
@@ -401,152 +390,214 @@ private:
     WSAOVERLAPPED    _sendOverlapped;
     WSAOVERLAPPED    _recvOverlapped;
     CHAR             _acceptBuffer[128];
+
+    static void DoPoll()
+    {
+        DWORD           transfered = 0;
+        ULONG_PTR       completion = 0;
+        LPOVERLAPPED    overlapped = nullptr;
+
+        BOOL status = GetQueuedCompletionStatus(__ioport, &transfered,
+            &completion, &overlapped, 1);
+
+        if (overlapped != nullptr) {
+            SocketRef* refer = (SocketRef*)completion;
+            
+            Socket* socket = refer->Get();
+
+            /// assume after DoClose, [OnAccept, OnReceive, OnSend, OnConnect] all return failure
+            if (overlapped == &socket->_recvOverlapped) {
+                if (socket->_listen) {
+                    socket->OnAccept(status);
+                } else {
+                    socket->OnReceive(transfered);
+                }
+            } else {
+                if (socket->_connected) {
+                    socket->OnSend(transfered);
+                } else {
+                    socket->OnConnect(status);
+                }
+            }
+            refer->DecRef();
+        }
+    }
+
+    static uint32_t DoWait()
+    {
+        DWORD           transfered = 0;
+        ULONG_PTR       completion = 0;
+        LPOVERLAPPED    overlapped = nullptr;
+
+        GetQueuedCompletionStatus(__ioport, &transfered,
+            &completion, &overlapped, 0);
+
+        if (overlapped != nullptr) {
+            SocketRef* refer = (SocketRef*)completion;
+            return refer->DecRef();
+        }
+        return 0;
+    }
 };
 
 //////////////////////////////////////////////////////////////////////
 
 DWORD WINAPI SocketManager::ThreadProc(LPVOID)
-{   
-    bool& dirty   = g_Manager._dirty;
-    auto& sockets = g_Manager._sockets;
-    auto  completion = g_Manager._completion;
-
-    while (true) {
-        while (!dirty) {
-            DWORD               transfered = 0;
-            WSAOVERLAPPED*      overlapped = NULL;
-            RefCount<Socket>*   refer = NULL;
-
-            BOOL status = GetQueuedCompletionStatus(completion, &transfered,
-                (PULONG_PTR)&refer, &overlapped, 0);
-
-            if (!status && overlapped == NULL) {
-                DWORD error = GetLastError();
-                if (error == ERROR_ABANDONED_WAIT_0 || error == ERROR_INVALID_HANDLE) {
-                    printf("SocketManager::Thread, Exit\n");
-                    return 0;
-                }
-            }
-
-            if (overlapped != NULL) {
-                Socket* socket = refer->Get();
-                if (overlapped == &socket->_recvOverlapped) {
-                    if (socket->_listen) {
-                        socket->OnAccept(status);
-                    } else {
-                        socket->OnReceive(transfered);
-                    }
-                } else {
-                    if (socket->_connected) {
-                        socket->OnSend(transfered);
-                    } else {
-                        socket->OnConnect(status);
-                    }
-                }
-                refer->DecRef();
-            }
-        }
-
-        std::list<ListenData>     listenQueue;
-        std::list<ConnectData>    connectQueue;
-        std::list<SendData>       sendQueue;
-        std::list<uint32_t>       closeQueue;
-        {
-            MutexGuard guard(g_Manager._queueLock);
-            listenQueue  = std::move(g_Manager._listenQueue);
-            connectQueue = std::move(g_Manager._connectQueue);
-            sendQueue    = std::move(g_Manager._sendQueue);
-            closeQueue   = std::move(g_Manager._closeQueue);
-            dirty        = false;
-        }
-
-        for (auto name : closeQueue) {
-            RefCount<Socket>* refer = nullptr;
-            {
-                MutexGuard guard(g_Manager._socketsLock);
-                auto iter = sockets.find(name);
-                if (iter != sockets.end()) {
-                    refer = iter->second;
-                    sockets.erase(iter);
-                }
-            }
-            if (refer != nullptr) {
-                refer->Get()->DoClose();
-                refer->DecRef();
-            }
-        }
-
-        for (auto listenData : listenQueue) {
-            auto refer = g_Manager.GetSocket(listenData._name);
-            if (refer != nullptr) {
-                refer->Get()->DoAccept(listenData._addr, listenData._port);
-            }
-        }
-
-        for (auto connectData : connectQueue) {
-            auto refer = g_Manager.GetSocket(connectData._name);
-            if (refer != nullptr) {
-                refer->Get()->DoConnect(connectData._addr, connectData._port);
-            }
-        }
-
-        for (auto sendData : sendQueue) {
-            auto refer = g_Manager.GetSocket(sendData._name);
-            if (refer != nullptr) {
-                refer->Get()->DoSend(sendData._data, sendData._closeOnComplete);
-            }
-        }
-    }
+{
+    theManager.MainLoop();
     return 0;
 }
 
-void SocketManager::Start()
+void SocketManager::Start(uint32_t numOfWorkThread)
 {
     if (InterlockedCompareExchange(&_running, 1, 0) == 0) {
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
             throw std::exception("SocketManager::Start, 1");
 
-        if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2) {
-            WSACleanup();
+        if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)
             throw std::exception("SocketManager::Start, 2");
-        }
 
         if (!Socket::Initialize())
             throw std::exception("SocketManager::Start, 3");
 
         _completion = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
         if (_completion == NULL)
-            throw std::exception("SocketManager::Start, 5");
+            throw std::exception("SocketManager::Start, 4");
 
         _thread = CreateThread(NULL, 0, &SocketManager::ThreadProc, NULL, 0, NULL);
         if (_thread == NULL)
             throw std::exception("SocketManager::Start, 6");
 
-        g_Completion = _completion;
+        __ioport = _completion;
 
-        Dispatcher::Instance().Start();
-
+        theDispatcher.Start(numOfWorkThread);
     }
 }
 
 void SocketManager::Close()
 {
+    theDispatcher.Close();
+
     if (InterlockedCompareExchange(&_running, 0, 1) == 1) {
-        Dispatcher::Instance().Close();
+        _dirty = true;
+
+        if (_thread != NULL) {
+            WaitForSingleObject(_thread, INFINITE);
+            CloseHandle(_thread);
+            _thread = NULL;
+        }
 
         if (_completion != NULL) {
             CloseHandle(_completion);
             _completion = NULL;
-
-            if (_thread != NULL) {
-                WaitForSingleObject(_thread, INFINITE);
-                CloseHandle(_thread);
-                _thread = NULL;
-            }
         }
 
         WSACleanup();
+    }
+}
+
+void SocketManager::MainLoop()
+{
+    while (_running) {
+        Socket::DoPoll();
+
+        if (_sending) {
+            std::vector<SocketSend>    sendQueue;
+            {
+                MutexGuard guard(_sendLock);
+                sendQueue = std::move(_sendQueue);
+                _sendQueue.reserve(10000);
+                _sending = false;
+            }
+
+            for (auto send : sendQueue) {
+                auto refer = GetSocket(send._name);
+                if (refer != nullptr) {
+                    refer->Get()->DoSend(send._data, send._close);
+                }
+            }
+        }
+
+        if (_dirty) {
+            std::vector<SocketInfo>    listenQueue;
+            std::vector<SocketInfo>    connectQueue;
+            std::vector<uint32_t>      closeQueue;
+            {
+                MutexGuard guard(_queueLock);
+                listenQueue  = std::move(_listenQueue);
+                connectQueue = std::move(_connectQueue);
+                closeQueue   = std::move(_closeQueue);
+                _dirty       = false;
+            }
+
+            for (auto name : closeQueue) {
+                RefCount<Socket>* refer = nullptr;
+                {
+                    MutexGuard guard(_socketsLock);
+                    auto iter = _sockets.find(name);
+                    if (iter != _sockets.end()) {
+                        refer = iter->second;
+                        _sockets.erase(iter);
+                    }
+                }
+
+                if (refer != nullptr) {
+                    refer->Get()->DoClose();
+                    refer->DecRef();
+                }
+            }
+
+            for (auto info : listenQueue) {
+                auto refer = GetSocket(info._name);
+                if (refer != nullptr) {
+                    refer->Get()->DoAccept(info._addr, info._port);
+                }
+            }
+
+            for (auto info : connectQueue) {
+                auto refer = GetSocket(info._name);
+                if (refer != nullptr) {
+                    refer->Get()->DoConnect(info._addr, info._port);
+                }
+            }
+        }
+    }
+
+    /// close all sockets
+    uint32_t pendingCount = 0;
+    {
+        MutexGuard guard(_socketsLock);
+        for (auto socket : _sockets) {
+            RefCount<Socket>* refer = socket.second;
+            refer->Get()->DoClose();
+
+            if (refer->GetRef() > 1) { pendingCount++; }
+        }
+    }
+
+    /// wait for pending sockets, at most 5000ms 
+    DWORD startTime = GetTickCount();
+    while (pendingCount > 0 && GetTickCount() - startTime < 5000) {
+        if (Socket::DoWait() == 1) { pendingCount--; }
+    }
+
+    /// clear sockets
+    {
+        MutexGuard guard(_socketsLock);
+        for (auto socket : _sockets) {
+            socket.second->DecRef();
+        }
+        _sockets.clear();
+    }
+
+    /// clear queues
+    {
+        MutexGuard guard(_queueLock);
+        _listenQueue.clear();
+        _connectQueue.clear();
+        _sendQueue.clear();
+        _closeQueue.clear();
     }
 }
 
@@ -573,42 +624,50 @@ RefCount<Socket>* SocketManager::GetSocket(uint32_t name)
     return iter != _sockets.end() ? iter->second : nullptr;
 }
 
-uint32_t SocketManager::Listen(const std::string& addr, uint16_t port, SocketAcceptHandlerPtr& acceptHandler)
+uint32_t SocketManager::Listen(const std::string& addr, uint16_t port, ServerHandlerPtr& handler)
 {
+    if (_running == 0) return 0;
+
     SOCKET socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
     if (socket == INVALID_SOCKET) return 0;
 
-    uint32_t   name = AddSocket(MakeShared(new Socket(socket, acceptHandler)));
+    uint32_t name = AddSocket(MakeShared(new Socket(socket, handler)));
+
     MutexGuard guard(_queueLock);
-    _listenQueue.push_back(ListenData(name, addr, port));
+    _listenQueue.emplace_back(name, addr, port);
     _dirty = true;
+
     return name;
 }
 
-uint32_t SocketManager::Connect(const std::string& addr, uint16_t port, SocketHandlerPtr& handler)
+uint32_t SocketManager::Create(const std::string& addr, uint16_t port, SocketHandlerPtr& handler)
 {
+    if (_running == 0) return 0;
+
     SOCKET socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
     if (socket == INVALID_SOCKET) return 0;
 
-    uint32_t   name = AddSocket(MakeShared(new Socket(socket, handler)));
+    uint32_t name = AddSocket(MakeShared(new Socket(socket, handler)));
+
     MutexGuard guard(_queueLock);
-    _connectQueue.push_back(ConnectData(name, addr, port));
+    _connectQueue.emplace_back(name, addr, port);
     _dirty = true;
+    
     return name;
 }
 
-void SocketManager::SendPacket(uint32_t name, PacketPtr& packet, bool closeWhenComplete)
+void SocketManager::Transfer(uint32_t name, PacketPtr& packet, bool close)
 {
-    MutexGuard guard(_queueLock);
-    _sendQueue.push_back(SendData(name, packet, closeWhenComplete));
-    _dirty = true;
+    MutexGuard guard(_sendLock);
+    _sendQueue.emplace_back(name, packet, close);
+    _sending = true;
 }
 
-void SocketManager::CloseSocket(uint32_t name)
+void SocketManager::ShutDown(uint32_t name)
 {
     MutexGuard guard(_queueLock);
     _closeQueue.push_back(name);
     _dirty = true;
 }
 
-NAMESPACE_CLOSE(TinyNet)
+TINYNET_CLOSE()

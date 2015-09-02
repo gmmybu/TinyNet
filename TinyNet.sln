@@ -13,6 +13,11 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "EchoClient", "EchoClient\Ec
 		{6E1D502B-FB09-4891-98BA-2CC1F7AD0D94} = {6E1D502B-FB09-4891-98BA-2CC1F7AD0D94}
 	EndProjectSection
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TestScheduler", "TestScheduler\TestScheduler.vcxproj", "{BD123870-D069-454D-9000-B1601B7ECCB1}"
+	ProjectSection(ProjectDependencies) = postProject
+		{6E1D502B-FB09-4891-98BA-2CC1F7AD0D94} = {6E1D502B-FB09-4891-98BA-2CC1F7AD0D94}
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Win32 = Debug|Win32
@@ -31,6 +36,10 @@ Global
 		{B8E6BE28-C9EA-4C9B-B5AA-95585CFB7975}.Debug|Win32.Build.0 = Debug|Win32
 		{B8E6BE28-C9EA-4C9B-B5AA-95585CFB7975}.Release|Win32.ActiveCfg = Release|Win32
 		{B8E6BE28-C9EA-4C9B-B5AA-95585CFB7975}.Release|Win32.Build.0 = Release|Win32
+		{BD123870-D069-454D-9000-B1601B7ECCB1}.Debug|Win32.ActiveCfg = Debug|Win32
+		{BD123870-D069-454D-9000-B1601B7ECCB1}.Debug|Win32.Build.0 = Debug|Win32
+		{BD123870-D069-454D-9000-B1601B7ECCB1}.Release|Win32.ActiveCfg = Release|Win32
+		{BD123870-D069-454D-9000-B1601B7ECCB1}.Release|Win32.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

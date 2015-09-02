@@ -1,9 +1,11 @@
 #pragma once
 #include "RefCount.h"
 
-NAMESPACE_START(TinyNet)
+
+TINYNET_START()
 
 class Buffer;
+
 class Packet;
 typedef SharedPtr<Packet> PacketPtr;
 
@@ -17,6 +19,7 @@ public:
     static const size_t IncCapacity = 128;
 
     static PacketPtr Create(size_t capacity = DefCapacity);
+
     static PacketPtr Create(RefCount<Buffer>* buffer, uint8_t* from);
 
     size_t     _size;
@@ -26,6 +29,7 @@ public:
     int32_t    _guid;
 };
 
+
 enum SeekMode
 {
     Seek_Set,
@@ -33,11 +37,12 @@ enum SeekMode
     Seek_End
 };
 
+
 class PacketReader
 {
     NOCOPYASSIGN(PacketReader);
 public:
-    PacketReader(PacketPtr packet) : _packet(packet)
+    PacketReader(const PacketPtr& packet) : _packet(packet)
     {
         _data = _base = (uint8_t*)(_packet.Get() + 1);
         _last = _data + _packet->_used;
@@ -67,11 +72,11 @@ public:
             _base = _last + val;
             break;
         default:
-            throw std::exception("MessageReader::Seek, Invalid SeekMode");
+            throw std::exception("PacketReader::Seek, Invalid SeekMode");
         }
 
         if (_base < _data || _base > _last)
-            throw std::exception("MessageReader::Seek, Range Overflow");
+            throw std::exception("PacketReader::Seek, Range Overflow");
 
         return _base - _data;
     }
@@ -79,7 +84,7 @@ public:
     void Read(void* data, size_t size)
     {
         if (_base + size > _last)
-            throw std::exception("MessageReader::Read, Range Overflow 0");
+            throw std::exception("PacketReader::Read, Range Overflow 0");
 
         memcpy(data, _base, size);
         _base += size;
@@ -120,7 +125,7 @@ public:
 
         const T* arr = (const T*)_base; 
         if (sizeof(T) * size + _base > _last)
-            throw std::exception("MessageReader::Read, Range Overflow 1");
+            throw std::exception("PacketReader::Read, Range Overflow 1");
 
         _base += size * sizeof(T);
         return arr;
@@ -132,11 +137,11 @@ public:
         operator>>(size);
 
         if (size + 1 + _base > _last)
-            throw std::exception("MessageReader::Read, Range Overflow 2");
+            throw std::exception("PacketReader::Read, Range Overflow 2");
 
         const char* text = (const char*)_base;
         if (text[size] != 0)
-            throw std::exception("MessageReader::ReadString, Bad String");
+            throw std::exception("PacketReader::ReadString, Bad String");
 
         _base += size + 1;
         return text;
@@ -153,6 +158,7 @@ private:
     uint8_t*     _last;
     PacketPtr    _packet;
 };
+
 
 class PacketWriter
 {
@@ -178,7 +184,7 @@ public:
 
         if (_packet->_size < used) {
             if (used > Packet::MaxCapacity)
-                throw std::exception("MessageWriter::Write, Exceed MaxSize");    
+                throw std::exception("PacketWriter::Write, Exceed MaxSize");    
 
             PacketPtr packet = Packet::Create(used + Packet::IncCapacity);
             memcpy(&packet->_used, &_packet->_used, _packet->_used + 12);
@@ -190,6 +196,13 @@ public:
         memcpy(_base, data, size);
         _base += size;
         _packet->_used += size;
+    }
+
+    void Write(const char* text)
+    {
+        int length = strlen(text);
+        operator<<(length);
+        Write(text, length + 1);
     }
 
     template<class T>
@@ -222,4 +235,4 @@ private:
     PacketPtr    _packet;
 };
 
-NAMESPACE_CLOSE(TinyNet)
+TINYNET_CLOSE()

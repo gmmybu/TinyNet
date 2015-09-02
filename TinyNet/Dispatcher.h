@@ -1,8 +1,8 @@
 #pragma once
 #include "Socket.h"
 
-//内部使用
-NAMESPACE_START(TinyNet)
+
+TINYNET_START()
 
 enum SocketEventType
 {
@@ -10,6 +10,7 @@ enum SocketEventType
     Socket_Receive,
     Socket_Close,
 };
+
 
 struct SocketEvent
 {
@@ -43,39 +44,44 @@ public:
         return se;
     }
 
-    static SocketEvent MakeClose(SocketAcceptHandlerPtr& acceptHanlder, uint32_t name)
+    static SocketEvent MakeClose(ServerHandlerPtr& serverHandler, uint32_t name)
     {
         SocketEvent se;
         se._type = Socket_Close;
         se._name = name;
-        se._acceptHandler = acceptHanlder;
+        se._serverHandler = serverHandler;
         return se;
     }
 
-    SocketEventType           _type;
-    uint32_t                  _name;
+    SocketEventType     _type;
+    uint32_t            _name;
 
-    bool                      _status;  //for connect
+    bool                _status;  //for connect
 
-    PacketPtr                 _packet;  //for receive
+    PacketPtr           _packet;  //for receive
 
-    SocketHandlerPtr          _handler;
-    SocketAcceptHandlerPtr    _acceptHandler;
+    SocketHandlerPtr    _handler;
+    ServerHandlerPtr    _serverHandler;
 };
+
 
 struct SocketEventQueue
 {
     bool                      _wait;    //是否在队列中
     bool                      _work;    //是否在处理中
     Mutex                     _lock;
-    std::list<SocketEvent>    _list; 
+    std::list<SocketEvent>    _list;
+
+    /// numbers of active sockets
+    uint32_t                  _active;
 };
 
 typedef SharedPtr<SocketEventQueue> SocketEventQueuePtr;  
 
-//暂用互斥量同步
+
 class Dispatcher
 {
+    NOCOPYASSIGN(Dispatcher);
 public:
     static Dispatcher& Instance()
     {
@@ -83,24 +89,28 @@ public:
         return instance;
     }
 
-    Dispatcher() :
-        _threadCount(0), _isRunning(0)
+    Dispatcher() : _threadCount(0), _running(0)
     {
+        for (int i = 0; i < 32; i++) {
+            _threads[i] = NULL;
+        }
     }
 
-    void Start();
+    void Start(uint32_t threadCount = 0);
     void Close();
 
-    void Enqueue(const SocketEvent& socketEvent);
+    void Enqueue(SocketEvent&& socketEvent);
 private:
     void Enqueue(SocketEventQueuePtr& socketEventQueue, bool resetFlag = true);
     SocketEventQueuePtr Dequeue();
 
     static DWORD WINAPI ThreadProc(LPVOID);
+
+    void MainLoop();
 private:
-    DWORD                _threadCount;
-    HANDLE               _threads[32];
-    volatile uint32_t    _isRunning;
+    uint32_t    _threadCount;
+    HANDLE      _threads[32];
+    uint32_t    _running;
     
     class SocketHandlerComparer
     {
@@ -111,24 +121,17 @@ private:
         }
     };
 
-    class SocketAcceptHandlerComparer
-    {
-    public:
-        bool operator()(const SocketAcceptHandlerPtr& lhs, const SocketAcceptHandlerPtr& rhs) const
-        {
-            return lhs.Get() < rhs.Get();
-        }
-    };
+    typedef std::list<SocketEventQueuePtr> SocketEventQueuePtrList;
+    typedef std::map<SocketHandlerPtr, SocketEventQueuePtr, SocketHandlerComparer> SocketHandler2EventQueueMap;
 
-    typedef std::map<SocketHandlerPtr, SocketEventQueuePtr, SocketHandlerComparer> Handler2EventQueueMap;
-    typedef std::map<SocketAcceptHandlerPtr, SocketEventQueuePtr, SocketAcceptHandlerComparer> AcceptHandler2EventQueueMap;
+    /// should use condition variable
 
-    Mutex                             _lock;
-    std::list<SocketEventQueuePtr>    _list;
-    Handler2EventQueueMap             _hanlder2EventQueue;
-    AcceptHandler2EventQueueMap       _acceptHandler2EventQueue;
-
-    NOCOPYASSIGN(Dispatcher);
+    Mutex                          _eventQueueLock;
+    SocketEventQueuePtr            _serverEventQueue;
+    SocketEventQueuePtrList        _socketEventQueueList;
+    SocketHandler2EventQueueMap    _socketHanlder2EventQueue;
 };
 
-NAMESPACE_CLOSE(TinyNet)
+#define theDispatcher Dispatcher::Instance()
+
+TINYNET_CLOSE()

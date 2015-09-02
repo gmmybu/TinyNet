@@ -3,45 +3,38 @@ using namespace TinyNet;
 
 #pragma comment(lib, "TinyNet.lib")
 
-SocketManager& g_Manager = SocketManager::Instance();
+int total = 0;
 
 class EchoServerHandler : public SocketHandler
 {
 public:
-    void OnConnect(uint32_t name, bool status)
+    void OnStart(uint32_t name, bool status)
     {
-        std::string text("hello");
+        std::string text("hello   theManager.Transfer(name, writer.GetPacket());   theManager.Transfer(name, writer.GetPacket());   theManager.Transfer(name, writer.GetPacket());   theManager.Transfer(name, writer.GetPacket());");
         PacketWriter writer(0, 0);
         writer<<text;
+        writer<<1;
 
-        g_Manager.SendPacket(name, writer.GetPacket());
-
-        printf("%d OnConnect %s\n", name, status ? "success" : "fail");
+        theManager.Transfer(name, writer.GetPacket());
     }
 
     void OnReceive(uint32_t name, PacketPtr& packet)
     {
         PacketReader reader(packet);
-        
-        std::string text;
-        reader>>text;
 
-        printf("%d OnReceive %s\n", name, text.c_str());
+        const char* text = reader.ReadString();
 
-        if (text == "close") {
-            g_Manager.CloseSocket(name);
-            return;
-        }
-
-        for (size_t i = 0; i < text.size() / 2; i++) {
-            size_t j = text.size() - i - 1;
-            std::swap(text[i], text[j]);
-        }
+        int id;
+        reader>>id;
 
         PacketWriter writer(0, 0);
-        writer<<text;
+        writer.Write(text);
+        writer<<(id + 1);
 
-        g_Manager.SendPacket(name, writer.GetPacket());
+        total++;
+        if (total % 100000 == 0) { printf("%d\n", GetTickCount()); }
+
+        theManager.Transfer(name, writer.GetPacket());
     }
 
     void OnClose(uint32_t name)
@@ -50,12 +43,14 @@ public:
     }
 };
 
-class EchoServerAcceptHandler : public SocketAcceptHandler
+SocketHandlerPtr socketHanlder = SocketHandlerPtr(new EchoServerHandler);
+
+class EchoServerAcceptHandler : public ServerHandler
 {
 public:
-    SocketHandlerPtr GetHandler(uint32_t name)
+    SocketHandlerPtr OnAccept(uint32_t name)
     {
-        return SocketHandlerPtr(new EchoServerHandler);
+        return socketHanlder;
     }
 
     void OnClose(uint32_t name)
@@ -68,14 +63,14 @@ uint32_t g_Accept;
 
 int main()
 {
-    g_Manager.Start();
+    theManager.Start();
     
-    SocketAcceptHandlerPtr acceptHandler = SocketAcceptHandlerPtr(new EchoServerAcceptHandler);
-    g_Accept = g_Manager.Listen("127.0.0.1", 1234, acceptHandler);
+    ServerHandlerPtr acceptHandler = ServerHandlerPtr(new EchoServerAcceptHandler);
+    g_Accept = theManager.Listen("127.0.0.1", 1234, acceptHandler);
 
     getchar();
 
-    g_Manager.Close();
+    theManager.Close();
 
     return 0;
 }

@@ -1,7 +1,8 @@
 #pragma once
 #include "RefCount.h"
 
-NAMESPACE_START(TinyNet)
+
+TINYNET_START()
 
 class Buffer;
 typedef SharedPtr<Buffer> BufferPtr;
@@ -25,4 +26,4 @@ public:
     uint8_t*   _last;
 };
 
-NAMESPACE_CLOSE(TinyNet)
+TINYNET_CLOSE()

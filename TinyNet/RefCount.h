@@ -1,9 +1,8 @@
 #pragma once
-#include "Common.h"
+#include "Require.h"
 
-NAMESPACE_START(TinyNet)
 
-//Œ¥”≈ªØ
+TINYNET_START()
 
 template<class T>
 class RefCount
@@ -28,6 +27,11 @@ public:
         Destroy();
     }
 
+    uint32_t GetRef() const
+    {
+        return _ref;
+    }
+
     uint32_t IncRef()
     {
         return InterlockedIncrement(&_ref);
@@ -46,6 +50,7 @@ protected:
     uint32_t    _ref;
 };
 
+
 template<class T>
 class RefCount_Default : public RefCount<T>
 {
@@ -60,6 +65,7 @@ protected:
         delete this;
     }
 };
+
 
 template<class T, class D>
 class RefCount_Deleter : public RefCount<T>
@@ -78,6 +84,7 @@ protected:
     D    _del;
 };
 
+
 template<class T>
 RefCount<T>* MakeShared(T* ptr)
 {
@@ -89,6 +96,7 @@ RefCount<T>* MakeShared(T* ptr, const D& d)
 {
     return new RefCount_Deleter<T, decltype(d)>(ptr, d);
 }
+
 
 template<class T>
 class SharedPtr
@@ -206,4 +214,4 @@ private:
     RefCount<T>*   _ref;
 };
 
-}
+TINYNET_CLOSE()

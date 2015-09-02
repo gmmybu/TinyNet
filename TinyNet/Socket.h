@@ -1,14 +1,21 @@
 #pragma once
 #include "Packet.h"
 
-NAMESPACE_START(TinyNet)
+
+TINYNET_START()
+
+/// ignore send buffer overflow
+
+/// callbacks will always be called except that when SocketManager is closing but some sockets are still active
+
+/// you'd better close all sockets before close SocketManager
 
 class SocketHandler
 {
 public:
     virtual ~SocketHandler() { }
 
-    virtual void OnConnect(uint32_t name, bool status) = 0;
+    virtual void OnStart(uint32_t name, bool status) = 0;
 
     virtual void OnClose(uint32_t name) = 0;
 
@@ -17,107 +24,108 @@ public:
 
 typedef SharedPtr<SocketHandler> SocketHandlerPtr;
 
-class SocketAcceptHandler
+
+class ServerHandler
 {
 public:
-    virtual ~SocketAcceptHandler() { }
+    virtual ~ServerHandler() { }
 
     virtual void OnClose(uint32_t name) = 0;
 
-    virtual SocketHandlerPtr GetHandler(uint32_t name) = 0;
+    /// return handler of incoming socket
+    virtual SocketHandlerPtr OnAccept(uint32_t name) = 0;
 };
 
-typedef SharedPtr<SocketAcceptHandler> SocketAcceptHandlerPtr;
+typedef SharedPtr<ServerHandler> ServerHandlerPtr;
+
 
 class Socket;
 
 class SocketManager
 {
-    friend class Socket;
+    NOCOPYASSIGN(SocketManager);
 public:
     static SocketManager& Instance()
     {
-        static SocketManager manager;
-        return manager;
+        static SocketManager instance;
+        return instance;
     }
 
-    SocketManager() : _running(0)
+    SocketManager() :
+        _running(0),
+        _completion(NULL),
+        _thread(NULL),
+        _sending(false),
+        _dirty(false)
     {
     }
 
-    void Start();
+    void Start(uint32_t numOfWorkThread = 0);
     void Close();
+            
+    uint32_t Listen(const std::string& addr, uint16_t port, ServerHandlerPtr& handler);
 
-    uint32_t Listen(const std::string& addr, uint16_t port, SocketAcceptHandlerPtr& handler);
-    
-    uint32_t Connect(const std::string& addr, uint16_t port, SocketHandlerPtr& handler);
+    uint32_t Create(const std::string& addr, uint16_t port, SocketHandlerPtr& handler);
 
-    void SendPacket(uint32_t name, PacketPtr& packet, bool closeWhenComplete = false);
+    void Transfer(uint32_t name, PacketPtr& packet, bool close = false);
 
-    void CloseSocket(uint32_t name);
+    void ShutDown(uint32_t name);
 private:
     static DWORD WINAPI ThreadProc(LPVOID);
 
-    RefCount<Socket>* GetSocket(uint32_t name);
-    uint32_t AddSocket(RefCount<Socket>* refer);
+    void MainLoop();
 
-    NOCOPYASSIGN(SocketManager);
+    HANDLE      _completion;
+    HANDLE      _thread;
+    uint32_t    _running;
 private:
-    HANDLE               _completion;
-    HANDLE               _thread;
-    volatile uint32_t    _running;
-
-    Mutex                                    _socketsLock;
-    volatile uint32_t                        _socketsNext;
+    uint32_t AddSocket(RefCount<Socket>* refer);
+    
+    RefCount<Socket>* GetSocket(uint32_t name);
+    
+    Mutex       _socketsLock;   /// should use rwlock
+    uint32_t    _socketsNext;
     std::map<uint32_t, RefCount<Socket>*>    _sockets;
-
-
-    bool    _dirty;
-    Mutex   _queueLock;
-
-    struct ListenData
+private:
+    struct SocketInfo
     {
-        ListenData(uint32_t name, const std::string& addr, uint16_t port) :
-            _name(name), _addr(addr), _port(port)
-        {
-        }
+        SocketInfo(uint32_t name, const std::string& addr, uint16_t port) :
+            _name(name), _addr(addr), _port(port) { }
 
         uint32_t       _name;
         std::string    _addr;
         uint16_t       _port;
     };
 
-    std::list<ListenData>    _listenQueue;
-
-    struct ConnectData
+    struct SocketSend
     {
-        ConnectData(uint32_t name, const std::string& addr, uint16_t port) :
-            _name(name), _addr(addr), _port(port)
-        {
-        }
-
-        uint32_t       _name;
-        std::string    _addr;
-        uint16_t       _port;
-    };
-
-    std::list<ConnectData>    _connectQueue;
-
-    struct SendData
-    {
-        SendData(uint32_t name, PacketPtr& data, bool closeOnComplete) :
-            _name(name), _data(data), _closeOnComplete(closeOnComplete)
-        {
-        }
+        SocketSend(uint32_t name, PacketPtr& data, bool close) :
+            _name(name), _data(data), _close(close) { }
 
         uint32_t     _name;
         PacketPtr    _data;
-        bool         _closeOnComplete;
+        bool         _close;
     };
 
-    std::list<SendData>    _sendQueue;
+    bool    _dirty;
 
-    std::list<uint32_t>    _closeQueue;
+    Mutex   _queueLock;
+
+    std::vector<SocketInfo>    _listenQueue;
+
+    std::vector<SocketInfo>    _connectQueue;
+
+    std::vector<uint32_t>      _closeQueue;
+
+    bool     _sending;
+    
+    Mutex    _sendLock;
+
+    std::vector<SocketSend>    _sendQueue;
+
+    friend class Socket;
 };
 
-}
+#define theManager SocketManager::Instance()
+
+TINYNET_CLOSE()

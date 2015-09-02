@@ -1,7 +1,8 @@
 #include "Packet.h"
 #include "Buffer.h"
 
-NAMESPACE_START(TinyNet)
+
+TINYNET_START()
 
 PacketPtr Packet::Create(size_t capacity)
 {
@@ -11,31 +12,35 @@ PacketPtr Packet::Create(size_t capacity)
         capacity = MaxCapacity;
     }
 
-    Packet* message = (Packet*)malloc(sizeof(Packet) + capacity);
-    message->_size = capacity;
-    message->_used = 0;
-    return PacketPtr(message, free);
+    Packet* packet = (Packet*)malloc(sizeof(Packet) + capacity);
+    packet->_size = capacity;
+    packet->_used = 0;
+    return PacketPtr(packet, free);
 }
 
-static Mutex g_bufferContainersLock;
-static std::map<Packet*, RefCount<Buffer>*> g_bufferContainers;
+namespace {
 
-static void Register(Packet* message, RefCount<Buffer>* buffer)
+Mutex __bufferContainersLock;
+std::map<Packet*, RefCount<Buffer>*> __bufferContainers;
+
+void Register(Packet* packet, RefCount<Buffer>* buffer)
 {
     buffer->IncRef();
 
-    MutexGuard guard(g_bufferContainersLock);
-    g_bufferContainers.insert(std::make_pair(message, buffer));
+    MutexGuard guard(__bufferContainersLock);
+    __bufferContainers.insert(std::make_pair(packet, buffer));
 }
 
-static void UnRegister(Packet* message)
+void UnRegister(Packet* packet)
 {
-    MutexGuard guard(g_bufferContainersLock);
-    auto iter = g_bufferContainers.find(message);
-    if (iter != g_bufferContainers.end()) {
+    MutexGuard guard(__bufferContainersLock);
+    auto iter = __bufferContainers.find(packet);
+    if (iter != __bufferContainers.end()) {
         iter->second->DecRef();
-        g_bufferContainers.erase(iter);
+        __bufferContainers.erase(iter);
     }
+}
+
 }
 
 PacketPtr Packet::Create(RefCount<Buffer>* buffer, uint8_t* from)
@@ -46,4 +51,4 @@ PacketPtr Packet::Create(RefCount<Buffer>* buffer, uint8_t* from)
     return PacketPtr(message, UnRegister);
 }
 
-NAMESPACE_CLOSE(TinyNet)
+TINYNET_CLOSE()

@@ -1,57 +1,66 @@
 #include "Dispatcher.h"
 
-//可能锁的方式有问题
-NAMESPACE_START(TinyNet)
 
-void Dispatcher::Start()
+TINYNET_START()
+
+void Dispatcher::Start(uint32_t threadCount)
 {
-    if (InterlockedCompareExchange(&_isRunning, 1, 0) == 0) {
-        SYSTEM_INFO info;
-        GetSystemInfo(&info);
-        _threadCount = info.dwNumberOfProcessors;
-        for (DWORD i = 0; i < _threadCount; i++) {
+    if (InterlockedCompareExchange(&_running, 1, 0) == 0) {
+        if (threadCount == 0) {
+            SYSTEM_INFO info;
+            GetSystemInfo(&info);
+            threadCount = info.dwNumberOfProcessors;
+        }
+
+        _threadCount = threadCount;
+        for (uint32_t i = 0; i < _threadCount; i++) {
             _threads[i] = CreateThread(NULL, 0, Dispatcher::ThreadProc, 0, 0, NULL);
-            SetThreadAffinityMask(_threads[i], i + 1);
+            if (_threads[i] == NULL)
+                throw std::exception("Dispatcher::Start, 1");
         }
     }
 }
 
 void Dispatcher::Close()
 {
-    if (InterlockedCompareExchange(&_isRunning, 0, 1) == 1) {
+    if (InterlockedCompareExchange(&_running, 0, 1) == 1) {
         WaitForMultipleObjects(_threadCount, _threads, TRUE, INFINITE);
+        for (uint32_t i = 0; i < _threadCount; i++) {
+            _threads[i] = NULL;
+        }
         
-        MutexGuard guard(_lock);
-        _hanlder2EventQueue.clear();
-        _list.clear();
+        MutexGuard guard(_eventQueueLock);
+        _socketHanlder2EventQueue.clear();
+        _socketEventQueueList.clear();
+        _serverEventQueue.Reset();
     }
 }
 
-void Dispatcher::Enqueue(const SocketEvent& socketEvent)
+void Dispatcher::Enqueue(SocketEvent&& socketEvent)
 {
-    MutexGuard guard(_lock);
+    MutexGuard guard(_eventQueueLock);
     
     SocketEventQueuePtr socketEventQueue;
     if (socketEvent._handler.Get()) {
-        auto iter = _hanlder2EventQueue.find(socketEvent._handler);
-        if (iter != _hanlder2EventQueue.end()) {
+        auto iter = _socketHanlder2EventQueue.find(socketEvent._handler);
+        if (iter != _socketHanlder2EventQueue.end()) {
             socketEventQueue = iter->second;
         } else {
             socketEventQueue = SocketEventQueuePtr(new SocketEventQueue);
             socketEventQueue->_work = false;
             socketEventQueue->_wait = false;
-            _hanlder2EventQueue.insert(std::make_pair(socketEvent._handler, socketEventQueue));
+            socketEventQueue->_active = 0;
+            _socketHanlder2EventQueue.insert(std::make_pair(socketEvent._handler, socketEventQueue));
         }
     } else {
-        auto iter = _acceptHandler2EventQueue.find(socketEvent._acceptHandler);
-        if (iter != _acceptHandler2EventQueue.end()) {
-            socketEventQueue = iter->second;
-        } else {
-            socketEventQueue = SocketEventQueuePtr(new SocketEventQueue);
-            socketEventQueue->_work = false;
-            socketEventQueue->_wait = false;
-            _acceptHandler2EventQueue.insert(std::make_pair(socketEvent._acceptHandler, socketEventQueue));
+        if (_serverEventQueue.Get() == nullptr) {
+            _serverEventQueue = SocketEventQueuePtr(new SocketEventQueue);
+            _serverEventQueue->_work = false;
+            _serverEventQueue->_wait = false;
+            _serverEventQueue->_active = 1;
         }
+
+        socketEventQueue = _serverEventQueue;
     }
     
     {
@@ -64,38 +73,36 @@ void Dispatcher::Enqueue(const SocketEvent& socketEvent)
 
 void Dispatcher::Enqueue(SocketEventQueuePtr& socketEventQueue, bool resetFlag)
 {
-    MutexGuard guard(_lock);
+    MutexGuard guard(_eventQueueLock);
 
     if (resetFlag) {
         socketEventQueue->_work = false;
     }
+
     if (socketEventQueue->_list.size() > 0 && !socketEventQueue->_wait && !socketEventQueue->_work) {
         socketEventQueue->_wait = true;
-
-        printf("Dispatcher::Enqueue, push back\n");
-        _list.push_back(socketEventQueue);
+        _socketEventQueueList.push_back(socketEventQueue);
     }
 }
 
 SocketEventQueuePtr Dispatcher::Dequeue()
 {
-    MutexGuard guard(_lock);
-    if (_list.empty())
+    MutexGuard guard(_eventQueueLock);
+    if (_socketEventQueueList.empty())
         return SocketEventQueuePtr();
 
-    SocketEventQueuePtr socketEventQueue = _list.front();
-    _list.pop_front();
+    SocketEventQueuePtr socketEventQueue = _socketEventQueueList.front();
+    _socketEventQueueList.pop_front();
 
     socketEventQueue->_work = true;
     socketEventQueue->_wait = false;
     return socketEventQueue;
 }
 
-DWORD WINAPI Dispatcher::ThreadProc(LPVOID)
+void Dispatcher::MainLoop()
 {
-    Dispatcher& dispatcher = Dispatcher::Instance();
-    while (dispatcher._isRunning) {
-        SocketEventQueuePtr socketEventQueue = dispatcher.Dequeue();
+    while (_running) {
+        SocketEventQueuePtr socketEventQueue = Dequeue();
         if (socketEventQueue.Get() != nullptr) {
             SocketEvent socketEvent;
             {
@@ -107,7 +114,8 @@ DWORD WINAPI Dispatcher::ThreadProc(LPVOID)
             switch (socketEvent._type)
             {
             case Socket_Connect:
-                socketEvent._handler->OnConnect(socketEvent._name, socketEvent._status);
+                socketEvent._handler->OnStart(socketEvent._name, socketEvent._status);
+                socketEventQueue->_active++;
                 break;
             case Socket_Receive:
                 socketEvent._handler->OnReceive(socketEvent._name, socketEvent._packet);
@@ -115,20 +123,34 @@ DWORD WINAPI Dispatcher::ThreadProc(LPVOID)
             case Socket_Close:
                 if (socketEvent._handler.Get()) {
                     socketEvent._handler->OnClose(socketEvent._name);
+                    socketEventQueue->_active--;
+
+                    if (socketEventQueue->_active == 0) {
+                        MutexGuard guard(_eventQueueLock);
+                        if (socketEventQueue->_active == 0 && socketEventQueue->_list.empty()) {
+                            _socketHanlder2EventQueue.erase(socketEvent._handler);
+                        }
+                    }
                 } else {
-                    socketEvent._acceptHandler->OnClose(socketEvent._name);
+                    socketEvent._serverHandler->OnClose(socketEvent._name);
                 }
                 break;
             default:
-                throw std::exception("Dispatcher::ThreadProc: Unknown EventType");
+                throw std::exception("Dispatcher::ThreadProc, Unknown EventType");
                 break;
             }
-            dispatcher.Enqueue(socketEventQueue);
+            Enqueue(socketEventQueue);
         } else {
+            /// should use condition variable
             Sleep(1);
         }
     }
+}
+
+DWORD WINAPI Dispatcher::ThreadProc(LPVOID)
+{
+    theDispatcher.MainLoop();
     return 0;
 }
 
-NAMESPACE_CLOSE(TinyNet)
+TINYNET_CLOSE()
