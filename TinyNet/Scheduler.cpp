@@ -23,6 +23,12 @@ void Scheduler::Close()
         WaitForSingleObject(_thread, INFINITE);
         CloseHandle(_thread);
         _thread = NULL;
+
+        {
+            LockGuard guard(_timerLock);
+            _timerQueue = TimerQueue();
+            _timerMap.clear();
+        }
     }
 }
 
