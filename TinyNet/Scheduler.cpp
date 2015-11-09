@@ -23,12 +23,6 @@ void Scheduler::Close()
         WaitForSingleObject(_thread, INFINITE);
         CloseHandle(_thread);
         _thread = NULL;
-
-        {
-            LockGuard guard(_timerLock);
-            _timerQueue = TimerQueue();
-            _timerMap.clear();
-        }
     }
 }
 
@@ -121,9 +115,14 @@ void Scheduler::ShutDown(uint32_t name)
     auto iter = _timerMap.find(name);
     if (iter != _timerMap.end()) {
         iter->second->_retired = true;
-        
+
         /// should use spin-wait
         while (iter->second->_running) {
+            
+            /// in case shutdown is running in timer callback which causes deadlock
+            if (GetCurrentThreadId() == GetThreadId(_thread))
+                return;
+
             ::Sleep(1);
         }
     }
