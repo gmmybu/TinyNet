@@ -511,7 +511,7 @@ void SocketManager::MainLoop()
                 _sending = false;
             }
 
-            for (auto send : sendQueue) {
+            for (auto& send : sendQueue) {
                 auto refer = GetSocket(send._name);
                 if (refer != nullptr) {
                     refer->Get()->DoSend(send._data, send._close);
@@ -548,14 +548,14 @@ void SocketManager::MainLoop()
                 }
             }
 
-            for (auto info : listenQueue) {
+            for (auto& info : listenQueue) {
                 auto refer = GetSocket(info._name);
                 if (refer != nullptr) {
                     refer->Get()->DoAccept(info._addr, info._port);
                 }
             }
 
-            for (auto info : connectQueue) {
+            for (auto& info : connectQueue) {
                 auto refer = GetSocket(info._name);
                 if (refer != nullptr) {
                     refer->Get()->DoConnect(info._addr, info._port);
@@ -626,10 +626,12 @@ RefCount<Socket>* SocketManager::GetSocket(uint32_t name)
 
 uint32_t SocketManager::Listen(const std::string& addr, uint16_t port, ServerHandlerPtr& handler)
 {
-    if (_running == 0) return 0;
+    if (_running == 0)
+        return 0;
 
-    SOCKET socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (socket == INVALID_SOCKET) return 0;
+    SOCKET socket = Socket::Create();
+    if (socket == INVALID_SOCKET)
+        return 0;
 
     uint32_t name = AddSocket(MakeShared(new Socket(socket, handler)));
 
@@ -642,10 +644,12 @@ uint32_t SocketManager::Listen(const std::string& addr, uint16_t port, ServerHan
 
 uint32_t SocketManager::Create(const std::string& addr, uint16_t port, SocketHandlerPtr& handler)
 {
-    if (_running == 0) return 0;
+    if (_running == 0)
+        return 0;
 
-    SOCKET socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
-    if (socket == INVALID_SOCKET) return 0;
+    SOCKET socket = Socket::Create();
+    if (socket == INVALID_SOCKET)
+        return 0;
 
     uint32_t name = AddSocket(MakeShared(new Socket(socket, handler)));
 
